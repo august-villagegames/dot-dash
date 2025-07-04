@@ -69,18 +69,28 @@ class KeyboardMonitorService {
         print("KeyboardMonitorService: handle() called, type: \(type.rawValue)")
         guard type == .keyDown else { return Unmanaged.passRetained(event) }
 
-        // Loop control: track timestamps
-        let now = Date().timeIntervalSince1970
-        recentKeyTimestamps.append(now)
-        // Keep only the last 20 timestamps
-        if recentKeyTimestamps.count > 20 {
-            recentKeyTimestamps.removeFirst(recentKeyTimestamps.count - 20)
-        }
-        // If 20 key events in less than 1 second, stop monitor
-        if recentKeyTimestamps.count == 20 && (now - recentKeyTimestamps.first!) < 1.0 {
-            print("[WARNING] Too many key events in 1 second. Stopping keyboard monitor to prevent runaway loop.")
-            stop()
-            return Unmanaged.passRetained(event)
+        // Only count real user events for runaway protection
+        let sourceStateID = event.getIntegerValueField(.eventSourceStateID)
+        let sourcePID = event.getIntegerValueField(.eventSourceUnixProcessID)
+        let userData = event.getIntegerValueField(.eventSourceUserData)
+        print("[DEBUG] Event sourceStateID: \(sourceStateID), sourcePID: \(sourcePID), userData: \(userData)")
+        // 1 = .hidSystemState (real hardware), 0 = .privateState (synthetic), others possible
+        let isRealUserEvent = (sourcePID == 0)
+
+        if isRealUserEvent {
+            // Loop control: track timestamps
+            let now = Date().timeIntervalSince1970
+            recentKeyTimestamps.append(now)
+            // Keep only the last 20 timestamps
+            if recentKeyTimestamps.count > 20 {
+                recentKeyTimestamps.removeFirst(recentKeyTimestamps.count - 20)
+            }
+            // If 20 key events in less than 1 second, stop monitor
+            if recentKeyTimestamps.count == 20 && (now - recentKeyTimestamps.first!) < 1.0 {
+                print("[WARNING] Too many key events in 1 second. Stopping keyboard monitor to prevent runaway loop.")
+                stop()
+                return Unmanaged.passRetained(event)
+            }
         }
 
         guard let keyEvent = event.copy() else { return Unmanaged.passRetained(event) }
@@ -95,12 +105,29 @@ class KeyboardMonitorService {
             unicodeString = String(utf16CodeUnits: chars, count: actualLength)
         }
 
-        print("KeyboardMonitorService: currentInput before = \(currentInput)")
-        if unicodeString == " " || unicodeString == "\r" { // Space or Return terminates the command
-            print("KeyboardMonitorService: Detected space or return. Clearing currentInput.")
-            currentInput = ""
-        } else {
-            currentInput.append(unicodeString)
+        // Only process real user events for currentInput building
+        if isRealUserEvent {
+            // Handle space or return - clear currentInput
+            if unicodeString == " " || unicodeString == "\r" {
+                print("KeyboardMonitorService: Detected space or return. Clearing currentInput.")
+                currentInput = ""
+            } else {
+                // Check for backspace key (key code 0x33)
+                let keyCode = keyEvent.getIntegerValueField(.keyboardEventKeycode)
+                if keyCode == 0x33 { // kVK_Delete (backspace)
+                    if !currentInput.isEmpty {
+                        currentInput.removeLast()
+                        print("KeyboardMonitorService: Backspace detected. Removed last character. currentInput = \(currentInput)")
+                    }
+                } else {
+                    // Only append printable characters to currentInput (excluding spaces and returns)
+                    if let scalar = unicodeString.unicodeScalars.first, scalar.isASCII, scalar.value >= 32 && scalar.value <= 126 {
+                        currentInput.append(unicodeString)
+                    }
+                }
+            }
+            // TODO: In the future, ensure that synthetic backspaces and other control characters do not interfere with shortcut typing.
+
             print("KeyboardMonitorService: currentInput after = \(currentInput)")
             // Check for immediate match after every key
             if let rule = rules.first(where: { $0.command == currentInput }) {
