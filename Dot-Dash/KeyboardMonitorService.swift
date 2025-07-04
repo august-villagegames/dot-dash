@@ -8,22 +8,27 @@ class KeyboardMonitorService {
     private var rules: [ExpansionRule] = []
     private let persistenceManager = PersistenceManager()
 
+    private var recentKeyTimestamps: [TimeInterval] = [] // For loop control
+
     func start() {
+        print("KeyboardMonitorService: start() called")
         // First, check for accessibility permissions.
         let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: false]
         let isAccessibilityEnabled = AXIsProcessTrustedWithOptions(options)
 
+        print("KeyboardMonitorService: isAccessibilityEnabled = \(isAccessibilityEnabled)")
         if !isAccessibilityEnabled {
-            print("Accessibility permissions are required. Please enable them in System Settings.")
-            // In a real app, you would show a UI to guide the user.
+            print("KeyboardMonitorService: Accessibility permissions not enabled")
             return
         }
 
         // Load rules from persistence
         self.rules = persistenceManager.getRules()
+        print("KeyboardMonitorService: Loaded rules: \(rules.map { $0.command })")
 
         // The event tap callback function
         let eventTapCallback: CGEventTapCallBack = { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
+            print("KeyboardMonitorService: Event tap callback triggered, type: \(type.rawValue)")
             guard let refcon = refcon else { return Unmanaged.passRetained(event) }
             let selfPointer = Unmanaged<KeyboardMonitorService>.fromOpaque(refcon).takeUnretainedValue()
             return selfPointer.handle(proxy: proxy, type: type, event: event)
@@ -39,8 +44,10 @@ class KeyboardMonitorService {
                                      userInfo: Unmanaged.passUnretained(self).toOpaque())
 
         if eventTap == nil {
-            print("Failed to create event tap")
+            print("KeyboardMonitorService: Failed to create event tap")
             return
+        } else {
+            print("KeyboardMonitorService: Event tap created successfully")
         }
 
         // Add the event tap to the run loop.
@@ -48,7 +55,7 @@ class KeyboardMonitorService {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: eventTap!, enable: true)
 
-        print("Keyboard monitor started.")
+        print("KeyboardMonitorService: Event tap added to run loop and enabled")
     }
 
     func stop() {
@@ -59,7 +66,22 @@ class KeyboardMonitorService {
     }
 
     private func handle(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        print("KeyboardMonitorService: handle() called, type: \(type.rawValue)")
         guard type == .keyDown else { return Unmanaged.passRetained(event) }
+
+        // Loop control: track timestamps
+        let now = Date().timeIntervalSince1970
+        recentKeyTimestamps.append(now)
+        // Keep only the last 20 timestamps
+        if recentKeyTimestamps.count > 20 {
+            recentKeyTimestamps.removeFirst(recentKeyTimestamps.count - 20)
+        }
+        // If 20 key events in less than 1 second, stop monitor
+        if recentKeyTimestamps.count == 20 && (now - recentKeyTimestamps.first!) < 1.0 {
+            print("[WARNING] Too many key events in 1 second. Stopping keyboard monitor to prevent runaway loop.")
+            stop()
+            return Unmanaged.passRetained(event)
+        }
 
         guard let keyEvent = event.copy() else { return Unmanaged.passRetained(event) }
 
@@ -73,15 +95,21 @@ class KeyboardMonitorService {
             unicodeString = String(utf16CodeUnits: chars, count: actualLength)
         }
 
+        print("KeyboardMonitorService: currentInput before = \(currentInput)")
         if unicodeString == " " || unicodeString == "\r" { // Space or Return terminates the command
-            if let rule = rules.first(where: { $0.command == currentInput }) {
-                print("Command recognized: \(currentInput)")
-                let expansionController = TextExpansionController()
-                expansionController.expand(command: self.currentInput, replacement: rule.replacementText)
-            }
+            print("KeyboardMonitorService: Detected space or return. Clearing currentInput.")
             currentInput = ""
         } else {
             currentInput.append(unicodeString)
+            print("KeyboardMonitorService: currentInput after = \(currentInput)")
+            // Check for immediate match after every key
+            if let rule = rules.first(where: { $0.command == currentInput }) {
+                print("KeyboardMonitorService: Command recognized: \(currentInput)")
+                let expansionController = TextExpansionController()
+                print("KeyboardMonitorService: Calling TextExpansionController.expand with command: \(currentInput), replacement: \(rule.replacementText)")
+                expansionController.expand(command: self.currentInput, replacement: rule.replacementText)
+                currentInput = "" // Reset after expansion
+            }
         }
         return Unmanaged.passRetained(event)
     }
