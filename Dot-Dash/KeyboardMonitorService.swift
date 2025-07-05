@@ -126,16 +126,33 @@ class KeyboardMonitorService {
                     }
                 }
             }
-            // TODO: In the future, ensure that synthetic backspaces and other control characters do not interfere with shortcut typing.
 
             print("KeyboardMonitorService: currentInput after = \(currentInput)")
+            
             // Check for immediate match after every key
             if let rule = rules.first(where: { $0.command == currentInput }) {
                 print("KeyboardMonitorService: Command recognized: \(currentInput)")
+                
+                // Temporarily disable the event tap to prevent interference during expansion
+                if let eventTap = eventTap {
+                    CGEvent.tapEnable(tap: eventTap, enable: false)
+                }
+                
+                // Clear currentInput before expansion to prevent re-triggering
+                let commandToExpand = currentInput
+                currentInput = ""
+                
                 let expansionController = TextExpansionController()
-                print("KeyboardMonitorService: Calling TextExpansionController.expand with command: \(currentInput), replacement: \(rule.replacementText)")
-                expansionController.expand(command: self.currentInput, replacement: rule.replacementText)
-                currentInput = "" // Reset after expansion
+                print("KeyboardMonitorService: Calling TextExpansionController.expand with command: \(commandToExpand), replacement: \(rule.replacementText)")
+                expansionController.expand(command: commandToExpand, replacement: rule.replacementText)
+                
+                // Re-enable the event tap after expansion
+                if let eventTap = eventTap {
+                    CGEvent.tapEnable(tap: eventTap, enable: true)
+                }
+                
+                // Return nil to consume the event and prevent it from being processed further
+                return nil
             }
         }
         return Unmanaged.passRetained(event)

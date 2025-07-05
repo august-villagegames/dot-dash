@@ -1,4 +1,3 @@
-
 import XCTest
 @testable import Dot_Dash
 
@@ -27,5 +26,41 @@ class TextExpansionControllerTests: XCTestCase {
         textExpansionController.expand(command: command, replacement: replacement)
 
         // In a UI test, you would verify that the text was actually replaced.
+    }
+    
+    func testEmptyCommandHandling() {
+        // Test that empty commands are handled gracefully
+        let command = ""
+        let replacement = "test expansion"
+        
+        // Should not crash and should handle gracefully
+        textExpansionController.expand(command: command, replacement: replacement)
+    }
+    
+    func testEmptyReplacementHandling() {
+        // Test that empty replacements are handled gracefully
+        let command = ".test"
+        let replacement = ""
+        
+        // Should not crash and should handle gracefully
+        textExpansionController.expand(command: command, replacement: replacement)
+    }
+    
+    func testSpecialCharactersInReplacement() {
+        // Test that special characters in replacement text are handled properly
+        let command = ".test"
+        let replacement = "test \"quoted\" expansion with 'quotes' and special chars: @#$%"
+        
+        // Should not crash and should handle special characters
+        textExpansionController.expand(command: command, replacement: replacement)
+    }
+    
+    func testLongCommandAndReplacement() {
+        // Test with longer text to ensure performance is acceptable
+        let command = ".verylongcommandthatmightcauseproblems"
+        let replacement = "This is a very long replacement text that might cause issues with the text expansion system. It contains multiple sentences and various punctuation marks. Let's see how it handles this."
+        
+        // Should not crash and should handle longer text
+        textExpansionController.expand(command: command, replacement: replacement)
     }
 }
